@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import {
   HiOutlineCommandLine, HiOutlinePlay, HiOutlinePlus,
   HiOutlineTrash, HiOutlinePencilSquare, HiOutlineXMark,
-  HiOutlineCheck, HiOutlineArrowUturnLeft
+  HiOutlineCheck, HiOutlineArrowUturnLeft, HiOutlineFolderOpen
 } from 'react-icons/hi2';
 import useConnectionStore from '../store/connectionStore';
 import useUIStore from '../store/uiStore';
@@ -11,6 +11,15 @@ import useQuickActionStore from '../store/quickActionStore';
 // Available emoji icons for command selection
 const ICON_OPTIONS = ['🔧', '🔄', '🐳', '⚡', '💾', '🧠', '⏱️', '🚀', '📦', '🔥', '🛠️', '📋', '🗂️', '🌐', '⚙️', '🔒'];
 
+/**
+ * Wraps a command with `cd <cwd> &&` if a working directory is specified.
+ * This ensures the command runs in the correct project folder on the remote server.
+ */
+function buildExecutableCommand(command, cwd) {
+  if (!cwd?.trim()) return command;
+  return `cd ${cwd.trim()} && ${command}`;
+}
+
 export default function QuickActions() {
   const execCommand = useConnectionStore((s) => s.execCommand);
   const addToast = useUIStore((s) => s.addToast);
@@ -18,7 +27,8 @@ export default function QuickActions() {
   const addCommand = useQuickActionStore((s) => s.addCommand);
   const updateCommand = useQuickActionStore((s) => s.updateCommand);
   const removeCommand = useQuickActionStore((s) => s.removeCommand);
-  const resetCommand = useQuickActionStore((s) => s.resetCommand);
+  const restoreBuiltins = useQuickActionStore((s) => s.restoreBuiltins);
+  const removedBuiltinIds = useQuickActionStore((s) => s.removedBuiltinIds);
 
   const [results, setResults] = useState({});
   const [running, setRunning] = useState(null);
@@ -26,14 +36,15 @@ export default function QuickActions() {
 
   // Edit/Create form state
   const [formMode, setFormMode] = useState(null); // null | 'create' | 'edit'
-  const [formData, setFormData] = useState({ id: null, label: '', command: '', icon: '🔧' });
+  const [formData, setFormData] = useState({ id: null, label: '', command: '', icon: '🔧', cwd: '' });
   const [showIconPicker, setShowIconPicker] = useState(false);
 
-  // Execute a quick action command via SSH
+  // Execute a quick action command via SSH, prepending cd if cwd is set
   const handleRun = async (cmd) => {
     setRunning(cmd.id || cmd.command);
     try {
-      const result = await execCommand(cmd.command);
+      const fullCommand = buildExecutableCommand(cmd.command, cmd.cwd);
+      const result = await execCommand(fullCommand);
       setResults((prev) => ({
         ...prev,
         [cmd.id || cmd.command]: {
@@ -60,19 +71,19 @@ export default function QuickActions() {
   const handleCustomRun = (e) => {
     e.preventDefault();
     if (!customCommand.trim()) return;
-    handleRun({ id: `custom-${Date.now()}`, command: customCommand.trim() });
+    handleRun({ id: `custom-${Date.now()}`, command: customCommand.trim(), cwd: '' });
   };
 
   // Open the create form
   const openCreateForm = () => {
-    setFormData({ id: null, label: '', command: '', icon: '🔧' });
+    setFormData({ id: null, label: '', command: '', icon: '🔧', cwd: '' });
     setFormMode('create');
     setShowIconPicker(false);
   };
 
   // Open the edit form pre-filled with existing command data
   const openEditForm = (cmd) => {
-    setFormData({ id: cmd.id, label: cmd.label, command: cmd.command, icon: cmd.icon });
+    setFormData({ id: cmd.id, label: cmd.label, command: cmd.command, icon: cmd.icon, cwd: cmd.cwd || '' });
     setFormMode('edit');
     setShowIconPicker(false);
   };
@@ -85,48 +96,60 @@ export default function QuickActions() {
     }
 
     if (formMode === 'create') {
-      addCommand({ label: formData.label, command: formData.command, icon: formData.icon });
+      addCommand({ label: formData.label, command: formData.command, icon: formData.icon, cwd: formData.cwd });
       addToast('Quick action created', 'success');
     } else if (formMode === 'edit') {
-      updateCommand(formData.id, { label: formData.label, command: formData.command, icon: formData.icon });
+      updateCommand(formData.id, { label: formData.label, command: formData.command, icon: formData.icon, cwd: formData.cwd });
       addToast('Quick action updated', 'success');
     }
 
     setFormMode(null);
-    setFormData({ id: null, label: '', command: '', icon: '🔧' });
+    setFormData({ id: null, label: '', command: '', icon: '🔧', cwd: '' });
   };
 
   // Cancel form without saving
   const handleFormCancel = () => {
     setFormMode(null);
-    setFormData({ id: null, label: '', command: '', icon: '🔧' });
+    setFormData({ id: null, label: '', command: '', icon: '🔧', cwd: '' });
     setShowIconPicker(false);
   };
 
-  // Delete a command with confirmation
+  // Delete any command (builtin or custom) with confirmation
   const handleDelete = (cmd) => {
     if (!confirm(`Delete "${cmd.label}"?`)) return;
     removeCommand(cmd.id);
     addToast('Quick action deleted', 'success');
   };
 
-  // Reset a builtin command to its defaults
-  const handleReset = (cmd) => {
-    resetCommand(cmd.id);
-    addToast('Reset to default', 'info');
+  // Restore all removed builtin commands
+  const handleRestoreBuiltins = () => {
+    restoreBuiltins();
+    addToast('Default actions restored', 'success');
   };
 
   return (
     <div className="p-2">
       <div className="flex items-center justify-between px-2 py-1 mb-2">
         <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Quick Actions</span>
-        <button
-          onClick={openCreateForm}
-          className="p-1 hover:bg-gray-700 rounded text-gray-400 hover:text-green-400 transition-colors"
-          title="Add new quick action"
-        >
-          <HiOutlinePlus className="w-3.5 h-3.5" />
-        </button>
+        <div className="flex gap-1">
+          {/* Show restore button only when some builtins have been removed */}
+          {removedBuiltinIds.length > 0 && (
+            <button
+              onClick={handleRestoreBuiltins}
+              className="p-1 hover:bg-gray-700 rounded text-gray-400 hover:text-yellow-400 transition-colors"
+              title="Restore default actions"
+            >
+              <HiOutlineArrowUturnLeft className="w-3.5 h-3.5" />
+            </button>
+          )}
+          <button
+            onClick={openCreateForm}
+            className="p-1 hover:bg-gray-700 rounded text-gray-400 hover:text-green-400 transition-colors"
+            title="Add new quick action"
+          >
+            <HiOutlinePlus className="w-3.5 h-3.5" />
+          </button>
+        </div>
       </div>
 
       {/* Create / Edit form */}
@@ -166,7 +189,7 @@ export default function QuickActions() {
               type="text"
               value={formData.label}
               onChange={(e) => setFormData((d) => ({ ...d, label: e.target.value }))}
-              placeholder="Label (e.g. Restart Nginx)"
+              placeholder="Label (e.g. Pull Frontend)"
               className="flex-1 bg-[#12121f] border border-gray-700 rounded-md px-2 py-1.5 text-xs text-gray-200 placeholder-gray-600 focus:outline-none focus:border-blue-500"
               autoFocus
             />
@@ -177,10 +200,25 @@ export default function QuickActions() {
             type="text"
             value={formData.command}
             onChange={(e) => setFormData((d) => ({ ...d, command: e.target.value }))}
-            placeholder="Command (e.g. sudo systemctl restart nginx)"
+            placeholder="Command (e.g. git pull)"
             className="w-full bg-[#12121f] border border-gray-700 rounded-md px-2 py-1.5 text-xs text-gray-200 font-mono placeholder-gray-600 focus:outline-none focus:border-blue-500"
-            onKeyDown={(e) => { if (e.key === 'Enter') handleFormSave(); if (e.key === 'Escape') handleFormCancel(); }}
           />
+
+          {/* Working directory input */}
+          <div className="flex items-center gap-1.5">
+            <HiOutlineFolderOpen className="w-3.5 h-3.5 text-gray-500 flex-shrink-0" />
+            <input
+              type="text"
+              value={formData.cwd}
+              onChange={(e) => setFormData((d) => ({ ...d, cwd: e.target.value }))}
+              placeholder="Working directory (optional, e.g. /var/www/myapp)"
+              className="flex-1 bg-[#12121f] border border-gray-700 rounded-md px-2 py-1.5 text-xs text-gray-200 font-mono placeholder-gray-600 focus:outline-none focus:border-blue-500"
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') handleFormSave();
+                if (e.key === 'Escape') handleFormCancel();
+              }}
+            />
+          </div>
 
           {/* Action buttons */}
           <div className="flex justify-end gap-1.5 pt-1">
@@ -238,6 +276,13 @@ export default function QuickActions() {
                   <div className="flex-1 min-w-0">
                     <div className="text-xs font-medium text-gray-300">{cmd.label}</div>
                     <div className="text-xs text-gray-500 font-mono truncate">{cmd.command}</div>
+                    {/* Show working directory if set */}
+                    {cmd.cwd && (
+                      <div className="flex items-center gap-1 mt-0.5">
+                        <HiOutlineFolderOpen className="w-2.5 h-2.5 text-gray-600 flex-shrink-0" />
+                        <span className="text-[10px] text-gray-600 font-mono truncate">{cmd.cwd}</span>
+                      </div>
+                    )}
                   </div>
                   {isRunning ? (
                     <HiOutlineCommandLine className="w-3.5 h-3.5 text-blue-400 animate-pulse flex-shrink-0" />
@@ -246,7 +291,7 @@ export default function QuickActions() {
                   )}
                 </button>
 
-                {/* Edit/Delete/Reset actions (visible on hover) */}
+                {/* Edit/Delete actions (visible on hover) */}
                 <div className="flex items-center gap-0.5 pr-1 opacity-0 group-hover/cmd:opacity-100 transition-opacity flex-shrink-0">
                   <button
                     onClick={() => openEditForm(cmd)}
@@ -255,23 +300,13 @@ export default function QuickActions() {
                   >
                     <HiOutlinePencilSquare className="w-3 h-3" />
                   </button>
-                  {cmd.builtin ? (
-                    <button
-                      onClick={() => handleReset(cmd)}
-                      className="p-1 hover:bg-gray-700 rounded text-gray-500 hover:text-yellow-400 transition-colors"
-                      title="Reset to default"
-                    >
-                      <HiOutlineArrowUturnLeft className="w-3 h-3" />
-                    </button>
-                  ) : (
-                    <button
-                      onClick={() => handleDelete(cmd)}
-                      className="p-1 hover:bg-gray-700 rounded text-gray-500 hover:text-red-400 transition-colors"
-                      title="Delete"
-                    >
-                      <HiOutlineTrash className="w-3 h-3" />
-                    </button>
-                  )}
+                  <button
+                    onClick={() => handleDelete(cmd)}
+                    className="p-1 hover:bg-gray-700 rounded text-gray-500 hover:text-red-400 transition-colors"
+                    title="Delete"
+                  >
+                    <HiOutlineTrash className="w-3 h-3" />
+                  </button>
                 </div>
               </div>
 
