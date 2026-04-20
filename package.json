@@ -1,0 +1,45 @@
+{
+  "name": "ssh-tool",
+  "version": "1.0.1",
+  "description": "Desktop SSH client with file editing, terminal, and server management",
+  "main": "main/main.js",
+  "scripts": {
+    "dev": "concurrently \"npm run dev:renderer\" \"npm run dev:electron\"",
+    "dev:renderer": "cd renderer && npx vite --port 5173",
+    "dev:electron": "wait-on http://localhost:5173 && electron .",
+    "build:renderer": "cd renderer && npx vite build",
+    "build:portable": "npm run build:renderer && electron-builder --win portable",
+    "build:dir": "npm run build:renderer && electron-builder --win dir",
+    "lint": "eslint ."
+  },
+  "build": {
+    "appId": "com.ssh-tool.app",
+    "productName": "SSH Tool",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main/**/*",
+      "renderer/dist/**/*",
+      "node_modules/**/*",
+      "package.json"
+    ],
+    "win": {
+      "icon": "assets/icon.ico"
+    },
+    "portable": {
+      "artifactName": "${productName}-${version}-portable.exe"
+    }
+  },
+  "dependencies": {
+    "ssh2": "^1.16.0",
+    "electron-store": "^8.2.0",
+    "uuid": "^11.1.0"
+  },
+  "devDependencies": {
+    "electron": "^33.3.1",
+    "electron-builder": "^25.1.8",
+    "concurrently": "^9.1.2",
+    "wait-on": "^8.0.3"
+  }
+}
